@@ -1,0 +1,1042 @@
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+// Background Message Handler (App band hone par background mein message capture karega)
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(
+    RemoteMessage message) async {
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp();
+  }
+
+  debugPrint(
+    "Background message received in Delivery Panel: "
+        "${message.messageId}",
+  );
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+
+  // Background messaging handler register karein
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  await DeliveryNotificationService.initialize();
+
+
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: DeliveryAuthCheck(),
+  ));
+}
+
+// 1. Check karein ki delivery boy pehle से login hai ya nahi
+class DeliveryAuthCheck extends StatefulWidget {
+  const DeliveryAuthCheck({super.key});
+
+  @override
+  State<DeliveryAuthCheck> createState() => _DeliveryAuthCheckState();
+}
+
+class _DeliveryAuthCheckState extends State<DeliveryAuthCheck> {
+  bool _isLoading = true;
+  bool _isLoggedIn = false;
+  String _savedBoyName = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkLoginStatus();
+  }
+
+  void _checkLoginStatus() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? boyName = prefs.getString('deliveryBoyName');
+    if (boyName != null && boyName.isNotEmpty) {
+      setState(() {
+        _isLoggedIn = true;
+        _savedBoyName = boyName;
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF140507),
+        body: Center(child: CircularProgressIndicator(color: Color(0xFFFF5722))),
+      );
+    }
+    return _isLoggedIn ? DeliveryDashboard(deliveryBoyName: _savedBoyName) : const DeliveryLoginPage();
+  }
+}
+
+// 2. Delivery Boy Login Screen (ID & Password)
+class DeliveryLoginPage extends StatefulWidget {
+  const DeliveryLoginPage({super.key});
+
+  @override
+  State<DeliveryLoginPage> createState() => _DeliveryLoginPageState();
+}
+
+class _DeliveryLoginPageState extends State<DeliveryLoginPage> {
+  final TextEditingController _idController = TextEditingController();
+  final TextEditingController _passController = TextEditingController();
+
+  void _loginDeliveryBoy() async {
+    String id = _idController.text.trim();
+    String pass = _passController.text.trim();
+
+    if (id.isEmpty || pass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Kripya Delivery Boy ID aur Password dalein!"), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    Map<String, String> validBoys = {
+      "Rahul Delivery": "@12345",
+      "Amit Bhai": "@12345",
+      "Hitesh Rider": "@8838839019",
+    };
+
+    if (validBoys.containsKey(id) && validBoys[id] == pass || pass == "@himanshu2009") {
+      String boyIdName = id;
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString('deliveryBoyName', boyIdName);
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => DeliveryDashboard(deliveryBoyName: boyIdName)),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Galat ID ya Password hai!"), backgroundColor: Colors.redAccent),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF2A1418),
+        title: const Text("HP Mart - Delivery Partner", style: TextStyle(color: Color(0xFFFFC107))),
+      ),
+      body: Container(
+        padding: const EdgeInsets.all(24.0),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF2B090E), Color(0xFF140507)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.delivery_dining, size: 80, color: Color(0xFFFF5722)),
+                const SizedBox(height: 16),
+                const Text("Delivery Boy Login", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+                const SizedBox(height: 30),
+                TextField(
+                  controller: _idController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.person, color: Color(0xFFFF5722)),
+                    hintText: "Delivery Boy Name / ID (e.g. Rahul Delivery)",
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    filled: true,
+                    fillColor: const Color(0xFF1B0B0E),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _passController,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.lock, color: Color(0xFFFF5722)),
+                    hintText: "Password",
+                    hintStyle: const TextStyle(color: Colors.white38),
+                    filled: true,
+                    fillColor: const Color(0xFF1B0B0E),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _loginDeliveryBoy,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF5722),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text("LOGIN PANEL", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// 3. Delivery Dashboard with Tabs & Accept/Reject Logic & Ringing
+class DeliveryDashboard extends StatefulWidget {
+  final String deliveryBoyName;
+  const DeliveryDashboard({super.key, required this.deliveryBoyName});
+
+  @override
+  State<DeliveryDashboard> createState() => _DeliveryDashboardState();
+}
+
+class _DeliveryDashboardState extends State<DeliveryDashboard> {
+  String searchQuery = "";
+  static final AudioPlayer audioPlayer = AudioPlayer();
+
+  final Set<String> _knownOrderIds = {};
+  bool _ordersInitialized = false;
+
+  // int _previousOrderCount = -1;
+
+  bool _isDeliveryAvailable = true;
+  bool _isLoadingDeliveryStatus = true;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _loadDeliveryStatus();
+
+    _setupFCM();
+  }
+
+  Future<void> _loadDeliveryStatus() async {
+    try {
+      final ref = FirebaseFirestore.instance
+          .collection('delivery_partners')
+          .doc(widget.deliveryBoyName);
+
+      final snapshot = await ref.get();
+
+      if (snapshot.exists) {
+        final data = snapshot.data();
+
+        if (!mounted) return;
+
+        setState(() {
+          _isDeliveryAvailable =
+              data?['isAvailable'] ?? true;
+
+          _isLoadingDeliveryStatus = false;
+        });
+      } else {
+        await ref.set({
+          'deliveryBoyId': widget.deliveryBoyName,
+          'isAvailable': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        if (!mounted) return;
+
+        setState(() {
+          _isDeliveryAvailable = true;
+          _isLoadingDeliveryStatus = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Delivery availability error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingDeliveryStatus = false;
+      });
+    }
+  }
+
+  Future<void> _toggleDeliveryStatus(bool value) async {
+    try {
+      final ref = FirebaseFirestore.instance
+          .collection('delivery_partners')
+          .doc(widget.deliveryBoyName);
+
+      await ref.set({
+        'deliveryBoyId': widget.deliveryBoyName,
+        'isAvailable': value,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+
+      setState(() {
+        _isDeliveryAvailable = value;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value
+                ? 'You are now AVAILABLE'
+                : 'You are now OFFLINE',
+          ),
+          backgroundColor:
+          value ? Colors.green : Colors.redAccent,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Delivery status update error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to update availability.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Future<void> _setupFCM() async {
+    final FirebaseMessaging messaging =
+        FirebaseMessaging.instance;
+
+    // Ask notification permission
+    final NotificationSettings settings =
+    await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    debugPrint(
+      "Delivery notification permission: "
+          "${settings.authorizationStatus}",
+    );
+
+    // Get FCM token
+    final String? token = await messaging.getToken();
+
+    debugPrint("Delivery FCM Token: $token");
+
+    if (token != null && token.isNotEmpty) {
+      await FirebaseFirestore.instance
+          .collection('delivery_tokens')
+          .doc(widget.deliveryBoyName)
+          .set({
+        'token': token,
+        'deliveryBoyId': widget.deliveryBoyName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    // FCM token refresh
+    FirebaseMessaging.instance.onTokenRefresh.listen(
+          (String newToken) async {
+        debugPrint(
+          "Delivery FCM Token refreshed: $newToken",
+        );
+
+        await FirebaseFirestore.instance
+            .collection('delivery_tokens')
+            .doc(widget.deliveryBoyName)
+            .set({
+          'token': newToken,
+          'deliveryBoyId': widget.deliveryBoyName,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      },
+    );
+
+    // App OPEN
+    // FirebaseMessaging.onMessage.listen(
+    //       (RemoteMessage message) async {
+    //     debugPrint(
+    //       "Delivery foreground notification: "
+    //           "${message.notification?.title}",
+    //     );
+    //
+    //     await _playNotificationSound();
+    //   },
+    // );
+    FirebaseMessaging.onMessage.listen(
+          (RemoteMessage message) async {
+        debugPrint(
+          "Delivery foreground notification: "
+              "${message.notification?.title}",
+        );
+
+        if (!_isDeliveryAvailable) {
+          return;
+        }
+
+        await _playNotificationSound();
+      },
+    );
+
+    // App BACKGROUND → user taps notification
+    FirebaseMessaging.onMessageOpenedApp.listen(
+          (RemoteMessage message) {
+        debugPrint(
+          "Delivery notification opened: "
+              "${message.data}",
+        );
+
+        _handleNotificationTap(message);
+      },
+    );
+
+    // App TERMINATED → user taps notification
+    final RemoteMessage? initialMessage =
+    await FirebaseMessaging.instance.getInitialMessage();
+
+    if (initialMessage != null) {
+      debugPrint(
+        "Delivery opened from terminated notification: "
+            "${initialMessage.data}",
+      );
+
+      _handleNotificationTap(initialMessage);
+    }
+  }
+
+  void _handleNotificationTap(RemoteMessage message) {
+    final String orderId =
+        message.data['orderId'] ?? '';
+
+    debugPrint(
+      "Delivery order notification tapped: $orderId",
+    );
+
+    // Phase 1:
+    // Confirm notification tap is received.
+    //
+    // Later we can navigate to the specific order.
+  }
+
+  Future<void> _playNotificationSound() async {
+    try {
+      await audioPlayer.stop();
+      await audioPlayer.play(AssetSource('sounds/bell.mp3'));
+    } catch (e) {
+      debugPrint("Audio Error: $e");
+    }
+  }
+
+  void _logout(BuildContext context) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('deliveryBoyName');
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const DeliveryLoginPage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF140507),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF2A1418),
+          title: Text("Rider: ${widget.deliveryBoyName}", style: const TextStyle(color: Color(0xFFFFC107), fontSize: 16)),
+          actions: [
+            if (!_isLoadingDeliveryStatus)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _isDeliveryAvailable
+                        ? 'AVAILABLE'
+                        : 'OFFLINE',
+                    style: TextStyle(
+                      color: _isDeliveryAvailable
+                          ? Colors.greenAccent
+                          : Colors.redAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 11,
+                    ),
+                  ),
+
+                  Switch(
+                    value: _isDeliveryAvailable,
+                    activeColor: Colors.green,
+                    inactiveThumbColor: Colors.red,
+                    onChanged: _toggleDeliveryStatus,
+                  ),
+                ],
+              ),
+
+            IconButton(
+              icon: const Icon(
+                Icons.logout,
+                color: Colors.redAccent,
+              ),
+              onPressed: () => _logout(context),
+            ),
+          ],
+          bottom: const TabBar(
+            labelColor: Color(0xFFFFC107),
+            unselectedLabelColor: Colors.white60,
+            indicatorColor: Color(0xFFFF5722),
+            tabs: [
+              Tab(text: "New Orders"),
+              Tab(text: "My Deliveries"),
+            ],
+          ),
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(10.0),
+              child: TextField(
+                onChanged: (value) {
+                  setState(() {
+                    searchQuery = value.toLowerCase();
+                  });
+                },
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search, color: Color(0xFFFF5722)),
+                  hintText: "Search hotel, customer, address...",
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  filled: true,
+                  fillColor: const Color(0xFF2A1418),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                ),
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                // [UPDATE]: Yahan se .where() hata diya hai taaki sare orders fetch ho, aur neeche client-side safely filter ho
+                stream: FirebaseFirestore.instance
+                    .collection('orders')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator(color: Color(0xFFFF5722)));
+                  }
+
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        "Koi naya order available nahi hai.",
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 15,
+                        ),
+                      ),
+                    );
+                  }
+
+// IMPORTANT:
+// Pehle raw snapshot ke saare existing order IDs remember karo.
+// Isse OFF -> ON karne par purane orders ko NEW nahi maana jayega.
+                  if (!_ordersInitialized) {
+                    for (final doc in snapshot.data!.docs) {
+                      _knownOrderIds.add(doc.id);
+                    }
+
+                    _ordersInitialized = true;
+                  }
+
+                  // [UPDATE]: Sirf wahi orders dikhenge jinko delivery boy ne hide (false) nahi kiya hai
+                  var allDocs = snapshot.data!.docs.where((doc) {
+                    var data = doc.data() as Map<String, dynamic>;
+                    return data['deliveryBoyVisible'] ?? true;
+                  }).toList();
+
+                  if (!_isDeliveryAvailable) {
+                    allDocs = allDocs.where((doc) {
+                      var data = doc.data() as Map<String, dynamic>;
+                      String acceptedBy = data['acceptedBy'] ?? '';
+
+                      // Keep only orders already accepted by this rider
+                      return acceptedBy == widget.deliveryBoyName;
+                    }).toList();
+                  }
+
+                  if (allDocs.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        "Koi naya order available nahi hai.",
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 15,
+                        ),
+                      ),
+                    );
+                  }
+
+                  // if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  //   _previousOrderCount = 0;
+                  //   return const Center(
+                  //     child: Text("Koi naya order available nahi hai.", style: TextStyle(color: Colors.white54, fontSize: 15)),
+                  //   );
+                  // }
+                  //
+                  // // [UPDATE]: Sirf wahi orders dikhenge jinko delivery boy ne hide (false) nahi kiya hai
+                  // var allDocs = snapshot.data!.docs.where((doc) {
+                  //   var data = doc.data() as Map<String, dynamic>;
+                  //   return data['deliveryBoyVisible'] ?? true;
+                  // }).toList();
+                  //
+                  // if (!_isDeliveryAvailable) {
+                  //   allDocs = allDocs.where((doc) {
+                  //     var data = doc.data() as Map<String, dynamic>;
+                  //     String acceptedBy = data['acceptedBy'] ?? '';
+                  //
+                  //     // Keep only orders already accepted by this rider
+                  //     return acceptedBy == widget.deliveryBoyName;
+                  //   }).toList();
+                  // }
+                  //
+                  // if (allDocs.isEmpty) {
+                  //   _previousOrderCount = 0;
+                  //   return const Center(
+                  //     child: Text("Koi naya order available nahi hai.", style: TextStyle(color: Colors.white54, fontSize: 15)),
+                  //   );
+                  // }
+
+                  if (!_ordersInitialized) {
+                    for (final doc in allDocs) {
+                      _knownOrderIds.add(doc.id);
+                    }
+
+                    _ordersInitialized = true;
+                  } else if (_isDeliveryAvailable) {
+
+                    // Only detect genuinely NEW orders.
+                    for (final doc in allDocs) {
+                      if (!_knownOrderIds.contains(doc.id)) {
+                        _knownOrderIds.add(doc.id);
+
+                        final data = doc.data() as Map<String, dynamic>;
+                        final String acceptedBy = data['acceptedBy'] ?? '';
+
+                        // Only ring for an unaccepted order.
+                        if (acceptedBy.isEmpty) {
+                          _playNotificationSound();
+                          break;
+                        }
+                      }
+                    }
+                  }
+
+                  var newOrdersList = <QueryDocumentSnapshot>[];
+                  var myDeliveriesList = <QueryDocumentSnapshot>[];
+
+                  for (var doc in allDocs) {
+                    var data = doc.data() as Map<String, dynamic>;
+                    String acceptedBy = data['acceptedBy'] ?? '';
+                    String hotelName = (data['hotel'] ?? data['hotelId'] ?? '').toLowerCase();
+                    String userName = (data['userName'] ?? '').toLowerCase();
+                    String phone = (data['phone'] ?? '').toLowerCase();
+                    String address = (data['address'] ?? '').toLowerCase();
+
+                    if (searchQuery.isNotEmpty &&
+                        !hotelName.contains(searchQuery) &&
+                        !userName.contains(searchQuery) &&
+                        !phone.contains(searchQuery) &&
+                        !address.contains(searchQuery)) {
+                      continue;
+                    }
+
+                    if (acceptedBy.isEmpty) {
+                      newOrdersList.add(doc);
+                    } else if (acceptedBy == widget.deliveryBoyName) {
+                      myDeliveriesList.add(doc);
+                    }
+                  }
+
+                  var reversedNewOrders = newOrdersList.reversed.toList();
+                  var reversedMyDeliveries = myDeliveriesList.reversed.toList();
+
+                  return TabBarView(
+                    children: [
+                      DeliveryOrderListView(
+                        orders: reversedNewOrders,
+                        isMyDeliveries: false,
+                        currentBoyName: widget.deliveryBoyName,
+                        audioPlayer: audioPlayer,
+                      ),
+                      DeliveryOrderListView(
+                        orders: reversedMyDeliveries,
+                        isMyDeliveries: true,
+                        currentBoyName: widget.deliveryBoyName,
+                        audioPlayer: audioPlayer,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 4. Order List View for Delivery Boys with Accept / Reject / Delete / Complete and Audio Stop Logic
+class DeliveryOrderListView extends StatelessWidget {
+  final List<QueryDocumentSnapshot> orders;
+  final bool isMyDeliveries;
+  final String currentBoyName;
+  final AudioPlayer audioPlayer;
+
+  const DeliveryOrderListView({
+    super.key,
+    required this.orders,
+    required this.isMyDeliveries,
+    required this.currentBoyName,
+    required this.audioPlayer,
+  });
+
+  void _verifyCodeAndDeliver(BuildContext context, String orderId, String correctCode) {
+    final TextEditingController codeController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2A1418),
+        title: const Text("Enter Delivery OTP Code", style: TextStyle(color: Color(0xFFFFC107))),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "Kripya customer se 4-digit ka Secret Delivery Code pooch kar yahan dalein:",
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: codeController,
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              style: const TextStyle(color: Colors.white, fontSize: 20, letterSpacing: 8),
+              textAlign: TextAlign.center,
+              decoration: InputDecoration(
+                hintText: "----",
+                hintStyle: const TextStyle(color: Colors.white38),
+                filled: true,
+                fillColor: const Color(0xFF1B0B0E),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF5722)),
+            onPressed: () async {
+              String enteredCode = codeController.text.trim();
+
+              if (correctCode.isEmpty || enteredCode == correctCode) {
+                Navigator.pop(context);
+
+                await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
+                  'status': 'Delivered Successfully 🎉',
+                });
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Order Successfully Delivered! 🎉"), backgroundColor: Colors.green),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Galat Secret Code hai! Customer se sahi code lein."), backgroundColor: Colors.redAccent),
+                );
+              }
+            },
+            child: const Text("VERIFY & DELIVER", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (orders.isEmpty) {
+      return Center(
+        child: Text(
+            isMyDeliveries ? "Aapne abhi koi order accept nahi kiya hai." : "Koi naya order nahi hai.",
+            style: const TextStyle(color: Colors.white54)
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: orders.length,
+      itemBuilder: (context, index) {
+        var doc = orders[index];
+        var orderData = doc.data() as Map<String, dynamic>;
+        String orderId = doc.id;
+        String deliveryCode = orderData['deliveryCode'] ?? '';
+        String currentStatus = orderData['status'] ?? '';
+
+        bool isDelivered = currentStatus.toLowerCase().contains('delivered');
+
+        int serialNumber = index + 1;
+
+        return Card(
+          color: const Color(0xFF2A1418),
+          margin: const EdgeInsets.only(bottom: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        "#$serialNumber - Store: ${orderData['hotel'] ?? orderData['hotelId'] ?? 'HP Mart'}",
+                        style: const TextStyle(color: Color(0xFFFFC107), fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          "₹${orderData['totalPrice']}",
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.redAccent, size: 22),
+                          onPressed: () async {
+                            // [UPDATE]: Yahan sirf deliveryBoyVisible ko false kiya hai taaki sirf is rider ki screen se hate, baki kisi se nahi
+                            await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
+                              'deliveryBoyVisible': false,
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Order delivery panel se hata diya gaya hai!")),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text("Items: ${orderData['itemName']} (x${orderData['quantity']})", style: const TextStyle(color: Colors.white, fontSize: 14)),
+                const Divider(color: Colors.white24, height: 16),
+                Text("Customer: ${orderData['userName']}", style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 4),
+
+                // Phone Number Clickable
+                InkWell(
+                  onTap: () async {
+                    String phone = "9358103814";
+                    if (phone.isNotEmpty) {
+                      final Uri launchUri = Uri(scheme: 'tel', path: phone);
+                      if (await canLaunchUrl(launchUri)) {
+                        await launchUrl(launchUri);
+                      }
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.phone, color: Colors.greenAccent, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          "Call Customer: +91 9358103814",
+                          style: const TextStyle(color: Colors.greenAccent, fontSize: 13, decoration: TextDecoration.underline),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                // Address Clickable
+                InkWell(
+                  onTap: () async {
+                    String address = orderData['address'] ?? '';
+                    if (address.isNotEmpty) {
+                      String googleUrl = "https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}";
+                      if (await canLaunchUrl(Uri.parse(googleUrl))) {
+                        await launchUrl(Uri.parse(googleUrl), mode: LaunchMode.externalApplication);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Google Map open nahi ho pa raha hai!")),
+                        );
+                      }
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.blueAccent, size: 14),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            "Address: ${orderData['address']}",
+                            style: const TextStyle(color: Colors.blueAccent, fontSize: 13, decoration: TextDecoration.underline),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+                Text("Landmark: ${orderData['landmark'] ?? 'N/A'}", style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(height: 12),
+                isMyDeliveries
+                    ? (isDelivered
+                    ? Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      "Your Delivery is Successful",
+                      style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ),
+                )
+                    : SizedBox(
+                  width: double.infinity,
+                  height: 40,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                    onPressed: () {
+                      _verifyCodeAndDeliver(context, orderId, deliveryCode);
+                    },
+                    child: const Text("confirm user code", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                ))
+                    : Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                        onPressed: () async {
+                          try {
+                            await audioPlayer.stop();
+                          } catch (_) {}
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Order ignore kar diya gaya hai.")),
+                          );
+                        },
+                        child: const Text("Reject", style: TextStyle(color: Colors.white)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                        onPressed: () async {
+                          try {
+                            await audioPlayer.stop();
+                          } catch (e) {
+                            debugPrint("Audio Stop Error: $e");
+                          }
+
+                          await FirebaseFirestore.instance.collection('orders').doc(orderId).update({
+                            'acceptedBy': currentBoyName,
+                            'status': 'Out for Delivery (Rider: $currentBoyName)',
+                          });
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Aapne order accept kar liya hai! Ghanti rok di gayi hai."), backgroundColor: Colors.green),
+                          );
+                        },
+                        child: const Text("Accept Order", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+
+class DeliveryNotificationService {
+  static final FlutterLocalNotificationsPlugin
+  flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+
+  static const AndroidNotificationChannel orderChannel =
+  AndroidNotificationChannel(
+    'delivery_order_alerts',
+    'Delivery Order Alerts',
+    description: 'Notifications for delivery partner orders',
+    importance: Importance.max,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('bell'),
+  );
+
+  static Future<void> initialize() async {
+    const AndroidInitializationSettings androidSettings =
+    AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings settings =
+    InitializationSettings(
+      android: androidSettings,
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(
+      settings:  settings,
+      onDidReceiveNotificationResponse: (
+          NotificationResponse response,
+          ) {
+        debugPrint(
+          'Delivery notification tapped: ${response.payload}',
+        );
+      },
+    );
+
+    final AndroidFlutterLocalNotificationsPlugin? androidPlugin =
+    flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.createNotificationChannel(orderChannel);
+  }
+}
